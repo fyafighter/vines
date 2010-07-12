@@ -1,0 +1,97 @@
+# This is the Vines XMPP server configuration file. Restart the server
+# with 'vines restart server' after updating this file.
+
+# Shared storage setting for all virtual hosts missing a
+# storage definition below.
+storage:
+  provider: Vines::Storage::Local
+  dir: conf/users
+
+# Each element below is a virtual host domain name that this
+# server will service. Each host can use its own storage
+# configuration or use the global storage, if none is provided
+# here. TLS encryption is mandatory so each host must have a
+# <domain>.crt and <domain>.key file in the conf/certs directory.
+# A self-signed certificate will be generated for each host if these files
+# are missing. You probably want to change 'localhost' to mydomain.tld.
+hosts:
+  localhost:
+    storage:
+      provider: Vines::Storage::Local
+      dir: conf/users
+
+# Define the listening ports for client-to-server (c2s),
+# server-to-server (s2s), http/BOSH (XEP-0124) and
+# external, trusted components (XEP-0114). Comment out
+# a listener block to disable that service.
+listeners:
+
+  # Configure the client-to-server port. The
+  # max_resources_per_account attribute limits how many
+  # concurrent connections one user can have to the server.
+  c2s:
+    host: 0.0.0.0
+    port: 5222
+    max_stanza_size: 65536
+    max_resources_per_account: 5
+
+  # Configure the server-to-server port. The max_stanza_size
+  # attribute should be much larger than the setting for
+  # client-to-server. Add host names to the 'hosts' attribute to
+  # allow those servers to connect. Any connection attempt from
+  # a host not in this list, will be denied.
+  s2s:
+    host: 0.0.0.0
+    port: 5269
+    max_stanza_size: 131072
+    hosts: []
+
+  # Configure the BOSH port. This allows HTTP clients to
+  # connect to the XMPP server.
+  http:
+    host: 0.0.0.0
+    port: 5280
+    max_stanza_size: 131072
+
+  # Add entries under here for each component allowed to connect
+  # to this server.  Each component must authenticate with its
+  # correct password.
+  component:
+    host: 0.0.0.0
+    port: 5347
+    max_stanza_size: 131072
+    #conference: secret
+
+# These are additional storage implementations that you
+# can use for a particular virtual host or as the
+# default mechanism.
+
+#storage:
+#  provider: Vines::Storage::CouchDB
+#  host: localhost
+#  port: 5984
+#  database: vines
+#  tls: true
+#  username:
+#  password:
+
+#storage:
+#  provider: Vines::Storage::Ldap
+#  host: localhost
+#  port: 636
+#  tls: true
+#  dn: cn=Directory Manager
+#  password: secret
+#  basedn: dc=example,dc=com
+#  object_class: person
+#  user_attr: uid
+#  name_attr: cn
+
+#storage:
+#  provider: Vines::Storage::Sql
+#  adapter: postgresql
+#  host: localhost
+#  port: 5432
+#  database: xmpp
+#  username:
+#  password:

@@ -1,0 +1,185 @@
+#!/usr/bin/env ruby
+
+$LOAD_PATH.unshift( File.join( File.dirname(File.dirname(File.expand_path(__FILE__))), 'lib') )
+
+require 'rubygems'
+require 'fileutils'
+require 'openssl'
+require 'socket'
+require 'tmpdir'
+require 'vines'
+require 'yaml'
+
+def cert(args)
+  if args.length != 1
+    $stderr.puts("vines cert domain")
+    exit(1)
+  end
+
+  domain = args[0]
+  key = OpenSSL::PKey::RSA.generate(2048)
+  ca = OpenSSL::X509::Name.parse("/C=US/ST=Colorado/L=Denver/O=Vines XMPP Server/CN=#{domain}")
+  cert = OpenSSL::X509::Certificate.new
+  cert.version = 2
+  cert.subject = ca
+  cert.issuer = ca
+  cert.serial = Time.now.to_i
+  cert.public_key = key.public_key
+  cert.not_before = Time.now - (24 * 60 * 60)
+  cert.not_after = Time.now + (365 * 24 * 60 * 60)
+
+  factory = OpenSSL::X509::ExtensionFactory.new
+  factory.subject_certificate = cert
+  factory.issuer_certificate = cert
+  cert.extensions = [
+    %w[basicConstraints CA:TRUE],
+    %w[subjectKeyIdentifier hash],
+    %w[subjectAltName] << [domain, host_name].map {|n| "DNS:#{n}" }.join(',')
+  ].map {|k, v| factory.create_ext(k, v) }
+
+  cert.sign(key, OpenSSL::Digest::SHA1.new)
+
+  {'key' => key, 'crt' => cert}.each_pair do |ext, o| 
+    name = File.join(home, 'conf', 'certs', "#{domain}.#{ext}")
+    File.open(name, "w") {|f| f.write(o.to_pem) }
+  end
+end
+
+def password(args)
+  if args.length != 2
+    $stderr.puts("vines password jid pass")
+    exit(1)
+  end
+  jid, password = args
+  puts Vines::Kit.hmac(password, jid)
+end
+
+def start(args)
+  case args.shift
+    when 'server' then start_server(args)
+    when 'client' then start_client(args)
+    else help
+  end
+end
+
+def restart(args)
+  case args.shift
+    when 'server' then send_term('server'); start_server(args)
+    when 'client' then send_term('client'); start_client(args)
+    else help
+  end
+end
+
+def start_server(args)
+  config_file = File.join(home, 'conf', 'vines.yml')
+  config = YAML.load_file(config_file)
+  server = Vines::XmppServer.new(config)
+  daemonize('server')
+  server.start
+end
+
+def start_client(args)
+  server, port = args[0], args[1] || 5222
+  unless server
+    $stderr.puts("Unable to discover XMPP server.")
+    exit(1)
+  end
+  hostname = host_name
+  if hostname == 'localhost' || hostname =~ /^localhost\./
+    msg = %q{
+      Hostname is misconfigured as '%s'. Make sure a
+      fully qualified domain name is present in the /etc/hosts
+      file and restart the client.
+    }.strip.squeeze(' ') % hostname
+    $stderr.puts(msg)
+    exit(1)
+  elsif !hostname.include?('.')
+    msg = %q{
+      Hostname is misconfigured as a short name '%s'. Make sure a
+      fully qualified domain name is present in the /etc/hosts
+      file.
+    }.strip.squeeze(' ') % hostname
+    $stderr.puts(msg)
+  end
+  client = Vines::Agent.new(hostname, server, port)
+  daemonize('client')
+  client.start
+end
+
+def daemonize(type)
+  opts = {
+    :pid => pid_file(type),
+    :stdout => log_file("#{type}.stdout"),
+    :stderr => log_file("#{type}.stderr")
+  }
+  daemon = Vines::Daemon.new(opts)
+  if daemon.running?
+    puts "Vines is running as process #{daemon.pid}." 
+    exit
+  else
+    puts "Vines has started."
+    daemon.start
+  end
+end
+
+def log_file(name)
+  dir = writable_dir('/var/log/vines', tmpdir)
+  File.join(dir, name)
+end
+
+def pid_file(name)
+  dir = writable_dir('/var/run/vines', tmpdir)
+  File.join(dir, "#{name}.pid")
+end
+
+def writable_dir(*dirs)
+  dir = dirs.flatten.find {|d| File.writable?(d) }
+  unless dir
+    $stderr.puts "A writable directory could not be found: #{dirs.flatten}"
+    exit(1)
+  end
+  dir
+end
+
+def tmpdir
+  dir = File.join(Dir.tmpdir, 'vines')
+  FileUtils.mkdir(dir) unless File.exists?(dir)
+  dir
+end
+
+def host_name
+  Socket.gethostbyname(Socket.gethostname).first
+end
+
+def stop(args)
+  case args.shift
+    when 'server' then send_term('server')
+    when 'client' then send_term('client')
+    else help
+  end
+end
+
+def send_term(type)
+  daemon = Vines::Daemon.new(:pid => pid_file(type))
+  if daemon.running?
+    daemon.stop
+    puts 'Vines has been shutdown.'
+  else
+    puts 'Vines is not running.'
+  end
+end
+
+def help(args=nil)
+  puts "vines [start|stop|restart|password|cert|help] [server|client]"
+  exit(1)
+end
+
+def home
+  File.dirname(File.dirname(File.expand_path(__FILE__)))
+end
+
+VINES_ROOT = home
+commands = {}
+%w[start stop restart password cert help].each {|c| commands[c] = method(c) }
+method = commands[ARGV.shift]
+method ? method.call(ARGV) : help(ARGV)
